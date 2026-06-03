@@ -1,0 +1,24 @@
+{
+  "search": {
+    "keyword": "파이썬",
+    "region": "서울",
+    "job_type": "정규직",
+    "experience": "신입",
+    "tech_stack": ["Python", "SQL", "React", "Java", "AWS", "Django", "Flask"]
+  },
+  "alert": {
+    "enabled": true,
+    "deadline_days": 3
+  },
+  "scoring": {
+    "weight_job_match": 40,
+    "weight_region_match": 20,
+    "weight_tech_match": 30,
+    "weight_deadline": 10
+  },
+  "output": {
+    "excel_path": "output/채용공고_분석결과.xlsx",
+    "csv_path": "output/채용공고_전체.csv",
+    "db_path": "output/jobs.db"
+  }
+}
