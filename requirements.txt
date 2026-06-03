@@ -3,6 +3,7 @@
 
 # 웹 서버 (백엔드)
 flask>=3.0.0
+gunicorn>=21.2.0
 
 # API 호출
 requests>=2.31.0
