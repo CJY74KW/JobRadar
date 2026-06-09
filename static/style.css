@@ -350,14 +350,221 @@ body {
 }
 
 /* ============================================================
+   Navigation Link (헤더 우측)
+   ============================================================ */
+.nav-link {
+  color: rgba(255,255,255,.9);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border: 1.5px solid rgba(255,255,255,.5);
+  border-radius: 8px;
+  transition: background .2s;
+  white-space: nowrap;
+}
+.nav-link:hover { background: rgba(255,255,255,.15); }
+
+/* ============================================================
+   Flash Messages
+   ============================================================ */
+.flash {
+  padding: 12px 18px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.flash-success { background: #dcfce7; color: #166534; border-left: 4px solid #16a34a; }
+.flash-error   { background: #fee2e2; color: #991b1b; border-left: 4px solid #dc2626; }
+
+/* ============================================================
+   Card Actions (지원기록 버튼 영역)
+   ============================================================ */
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+.btn-apply {
+  padding: 6px 14px;
+  background: #eff6ff;
+  color: var(--primary);
+  border: 1.5px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.btn-apply:hover { background: var(--primary); color: white; }
+
+/* ============================================================
+   Toast (지원 기록 완료 알림)
+   ============================================================ */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  background: #1e293b;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  z-index: 9999;
+  animation: fadeInUp .3s ease;
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   Dashboard Grid & Chart Cards (기능 5)
+   ============================================================ */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+  gap: 20px;
+}
+.chart-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+.chart-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+/* ============================================================
+   Tracker Page Styles (기능 3)
+   ============================================================ */
+.tracker-add-section {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 28px 32px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 18px;
+  color: var(--text);
+}
+.tracker-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+.tracker-form textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+.tracker-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+.tracker-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  font-size: 13px;
+}
+.tracker-table th {
+  background: #1f4e79;
+  color: white;
+  padding: 12px 14px;
+  text-align: left;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.tracker-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.tracker-table tr:last-child td { border-bottom: none; }
+.tracker-table tr:hover td { background: #f8fafc; }
+
+.app-company-link {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.app-company-link:hover { text-decoration: underline; }
+.app-title { max-width: 220px; }
+.td-date  { white-space: nowrap; color: var(--text-muted); font-size: 12px; }
+.td-score { white-space: nowrap; font-weight: 700; color: var(--primary); }
+.deadline-past { color: var(--danger); }
+
+.status-form   { margin: 0; }
+.status-select {
+  padding: 5px 8px;
+  border: 1.5px solid var(--sc, var(--border));
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sc, var(--text));
+  background: white;
+  cursor: pointer;
+}
+
+.notes-form  { margin: 0; }
+.notes-input {
+  width: 180px;
+  min-height: 52px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.btn-delete {
+  padding: 5px 12px;
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-delete:hover { background: #dc2626; color: white; }
+
+/* ============================================================
    Responsive
    ============================================================ */
 @media (max-width: 768px) {
-  .job-grid    { grid-template-columns: 1fr; }
-  .summary-bar { flex-direction: column; }
-  .ai-content  { grid-template-columns: 1fr; }
-  .tabs        { flex-wrap: wrap; }
-  .tab         { padding: 8px 14px; font-size: 13px; }
+  .job-grid       { grid-template-columns: 1fr; }
+  .summary-bar    { flex-direction: column; }
+  .ai-content     { grid-template-columns: 1fr; }
+  .tabs           { flex-wrap: wrap; }
+  .tab            { padding: 8px 14px; font-size: 13px; }
   .search-section { padding: 20px; }
   .stats-card     { padding: 20px; }
+  .dashboard-grid { grid-template-columns: 1fr; }
+  .nav-link       { font-size: 12px; padding: 6px 10px; }
+  .notes-input    { width: 120px; }
 }

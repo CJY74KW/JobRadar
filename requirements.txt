@@ -20,3 +20,9 @@ openpyxl>=3.1.0
 
 # 환경변수 관리
 python-dotenv>=1.0.0
+
+# Claude AI API (기능 4: AI 자소서·면접 질문 생성)
+anthropic>=0.40.0
+
+# 스케줄러 (기능 2: 자동 수집)
+APScheduler>=3.10.0

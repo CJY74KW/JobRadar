@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>지원 현황 트래커</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <h1>지원 현황 트래커</h1>
+      <p>지원한 공고를 단계별로 관리하세요</p>
+    </div>
+    <a href="/" class="nav-link">← 공고 검색으로</a>
+  </div>
+</header>
+
+<main class="container">
+
+  {# 플래시 메시지 #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {# ── 요약 통계 ── #}
+  <div class="summary-bar" style="margin-bottom:24px;">
+    <div class="summary-item">
+      <span class="summary-num">{{ stats.total }}</span>
+      <span class="summary-label">총 지원</span>
+    </div>
+    {% for s in statuses %}
+    <div class="summary-item" style="border-top-color:{{ status_color[s] }};">
+      <span class="summary-num" style="color:{{ status_color[s] }};">
+        {{ stats.by_status[s] }}
+      </span>
+      <span class="summary-label">{{ s }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── 수동 추가 폼 ── #}
+  <section class="tracker-add-section">
+    <h2 class="section-title">지원 공고 직접 추가</h2>
+    <form action="/tracker/add" method="POST" class="tracker-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>회사명 *</label>
+          <input type="text" name="company" required placeholder="예: (주)테크스타트">
+        </div>
+        <div class="form-group">
+          <label>공고명 *</label>
+          <input type="text" name="title" required placeholder="예: Python 백엔드 개발자">
+        </div>
+        <div class="form-group">
+          <label>지원 상태</label>
+          <select name="status">
+            {% for s in statuses %}
+              <option value="{{ s }}" {% if s == '지원완료' %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>마감일</label>
+          <input type="date" name="deadline">
+        </div>
+        <div class="form-group">
+          <label>근무지</label>
+          <input type="text" name="location" placeholder="예: 서울 강남구">
+        </div>
+        <div class="form-group">
+          <label>적합도 점수</label>
+          <input type="number" name="score" min="0" max="100" step="0.1" placeholder="0~100">
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:10px;">
+        <label>공고 링크</label>
+        <input type="url" name="link" placeholder="https://...">
+      </div>
+      <div class="form-group" style="margin-top:10px;">
+        <label>메모</label>
+        <textarea name="notes" rows="2" placeholder="면접 일정, 준비 사항 등..."></textarea>
+      </div>
+      <button type="submit" class="btn-search" style="margin-top:12px;">지원 기록 추가</button>
+    </form>
+  </section>
+
+  {# ── 상태별 탭 필터 ── #}
+  <section style="margin-top:32px;">
+    <div class="tabs" id="tracker-tabs">
+      <button class="tab active" onclick="filterStatus('all', this)">
+        전체 ({{ stats.total }})
+      </button>
+      {% for s in statuses %}
+      <button class="tab" onclick="filterStatus('{{ s }}', this)"
+              style="--tab-color:{{ status_color[s] }};">
+        {{ s }} ({{ stats.by_status[s] }})
+      </button>
+      {% endfor %}
+    </div>
+
+    {# ── 지원 목록 테이블 ── #}
+    {% set all_apps = [] %}
+    {% for s in statuses %}{% for a in grouped[s] %}{% if all_apps.append(a) %}{% endif %}{% endfor %}{% endfor %}
+
+    {% if all_apps %}
+    <div class="tracker-table-wrap">
+      <table class="tracker-table" id="tracker-table">
+        <thead>
+          <tr>
+            <th>회사명</th>
+            <th>공고명</th>
+            <th>상태</th>
+            <th>지원일</th>
+            <th>마감일</th>
+            <th>점수</th>
+            <th>메모</th>
+            <th>관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in statuses %}
+            {% for app in grouped[s] %}
+            <tr data-status="{{ app.status }}">
+              <td>
+                {% if app.link %}
+                  <a href="{{ app.link }}" target="_blank" rel="noopener"
+                     class="app-company-link">{{ app.company }}</a>
+                {% else %}
+                  {{ app.company }}
+                {% endif %}
+              </td>
+              <td class="app-title">{{ app.title }}</td>
+              <td>
+                <form action="/tracker/update/{{ app.id }}" method="POST"
+                      class="status-form">
+                  <select name="status" class="status-select"
+                          onchange="this.form.submit()"
+                          style="--sc: {{ status_color[app.status] }};">
+                    {% for st in statuses %}
+                      <option value="{{ st }}"
+                        {% if st == app.status %}selected{% endif %}>
+                        {{ st }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </form>
+              </td>
+              <td class="td-date">{{ app.applied_date }}</td>
+              <td class="td-date">
+                {% if app.deadline %}
+                  <span class="{% if app.deadline < today_str %}deadline-past{% endif %}">
+                    {{ app.deadline }}
+                  </span>
+                {% endif %}
+              </td>
+              <td class="td-score">
+                {% if app.score %}{{ app.score }}점{% endif %}
+              </td>
+              <td>
+                <form action="/tracker/update/{{ app.id }}" method="POST"
+                      class="notes-form">
+                  <textarea name="notes" class="notes-input"
+                            onblur="this.form.submit()">{{ app.notes }}</textarea>
+                </form>
+              </td>
+              <td>
+                <form action="/tracker/delete/{{ app.id }}" method="POST"
+                      onsubmit="return confirm('삭제하시겠습니까?')">
+                  <button type="submit" class="btn-delete">삭제</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="margin-top:24px;">
+      아직 지원 기록이 없습니다.<br>
+      위 폼에서 직접 추가하거나, 공고 검색 결과에서 '지원 기록' 버튼을 누르세요.
+    </div>
+    {% endif %}
+  </section>
+
+</main>
+
+<script>
+  const todayStr = "{{ now.strftime('%Y-%m-%d') if now else '' }}";
+
+  function filterStatus(status, btn) {
+    document.querySelectorAll('#tracker-tabs .tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('#tracker-table tbody tr').forEach(row => {
+      if (status === 'all' || row.dataset.status === status) {
+        row.style.display = '';
+      } else {
+        row.style.display = 'none';
+      }
+    });
+  }
+</script>
+</body>
+</html>
