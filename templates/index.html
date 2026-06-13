@@ -1,6 +1,6 @@
 {#
-  index.html — 채용 정보 분석기
-  기능 추가: 대시보드 탭(Chart.js), 지원기록 버튼, 플래시 메시지, 트래커 네비
+  index.html — JOBRADOR
+기능 추가: 대시보드 탭(Chart.js), 플래시 메시지, 트래커 네비
 #}
 
 {% macro render_card(job, show_ai=true) %}
@@ -10,93 +10,80 @@
     <div class="card-badges">
       <span class="badge badge-source">{{ job.source }}</span>
 
-      {% if job.dday_num == 9999 %}
-        <span class="badge badge-dday normal">상시채용</span>
-      {% elif job.dday_num == 0 %}
-        <span class="badge badge-dday urgent">D-Day!</span>
-      {% elif job.dday_num <= 3 %}
-        <span class="badge badge-dday urgent">{{ job.dday }}</span>
-      {% elif job.dday_num <= 7 %}
-        <span class="badge badge-dday warning">{{ job.dday }}</span>
-      {% else %}
-        <span class="badge badge-dday safe">{{ job.dday }}</span>
-      {% endif %}
-
       {% if job.score >= 70 %}
-        <span class="badge badge-score high">★ {{ job.score }}점</span>
+      <span class="badge badge-score high">★ {{ job.score }}점</span>
       {% elif job.score >= 40 %}
-        <span class="badge badge-score mid">{{ job.score }}점</span>
+      <span class="badge badge-score mid">{{ job.score }}점</span>
       {% else %}
-        <span class="badge badge-score low">{{ job.score }}점</span>
+      <span class="badge badge-score low">{{ job.score }}점</span>
       {% endif %}
     </div>
-    <span class="card-deadline">마감 {{ job.deadline }}</span>
   </div>
 
   <h3 class="card-title">{{ job.title }}</h3>
   <p class="card-company">{{ job.company }}</p>
 
   <div class="card-meta">
-    {% if job.location   %}<span>📍 {{ job.location }}</span>{% endif %}
-    {% if job.job_type   %}<span>💼 {{ job.job_type }}</span>{% endif %}
-    {% if job.experience %}<span>👤 {{ job.experience }}</span>{% endif %}
-    {% if job.salary     %}<span>💰 {{ job.salary }}</span>{% endif %}
+    {% if job.location %}<span>📍 {{ job.location }}</span>{% endif %}
   </div>
 
   {% if job.tech_keywords %}
   <div class="tech-tags">
     {% for kw in job.tech_keywords[:8] %}
-      <span class="tag">{{ kw }}</span>
+    <span class="tag">{{ kw }}</span>
     {% endfor %}
   </div>
   {% endif %}
 
-  {% if job.match_detail %}
-    <p class="match-detail">✔ {{ job.match_detail }}</p>
+  {% if job.score_breakdown %}
+  <div class="score-breakdown">
+    {% for key, label in [
+    ('tech', '기술'), ('role', '직무'), ('region', '지역'), ('quality', '정보')
+    ] %}
+    {% set part = job.score_breakdown.get(key) %}
+    {% if part and (part.active is not defined or part.active) %}
+    <span class="score-part">
+      <strong>{{ label }} {{ part.score }}/{{ part.max }}</strong>
+      <em>
+        {{ part.label }}
+        {% if part.penalty is defined and part.penalty %}
+        · 감점 {{ part.penalty }}
+        {% endif %}
+      </em>
+    </span>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% elif job.match_detail %}
+  <p class="match-detail">✔ {{ job.match_detail }}</p>
   {% endif %}
 
-  {% if show_ai and job.cover_letter_points %}
-  <details class="ai-section">
-    <summary>자소서 포인트 &amp; 예상 면접 질문 보기</summary>
-    <div class="ai-content">
-      <div class="ai-block">
-        <h4>📝 자기소개서 작성 포인트</h4>
-        <ol>
-          {% for point in job.cover_letter_points %}
-            <li>{{ point }}</li>
-          {% endfor %}
-        </ol>
-      </div>
-      <div class="ai-block">
-        <h4>💬 예상 면접 질문</h4>
-        <ol>
-          {% for q in job.interview_questions %}
-            <li>{{ q }}</li>
-          {% endfor %}
-        </ol>
-      </div>
-    </div>
-  </details>
-  {% endif %}
+  <div class="ai-section">
+    <button class="btn-ai" onclick="loadAiContent(this)" data-job='{{ {
+        "company":       job.company | default(""),
+        "title":         job.title | default(""),
+        "source":        job.source | default(""),
+        "location":      job.location | default(""),
+        "score":         job.score | default(0),
+        "score_breakdown": job.score_breakdown | default({}),
+        "match_detail":  job.match_detail | default(""),
+        "tech_keywords": job.tech_keywords | default([]),
+        "requirements":  job.requirements | default(""),
+        "preferred":     job.preferred | default(""),
+        "description":   job.description | default(""),
+        "link":          job.link | default("")
+      } | tojson }}'>
+      ▶ 자소서 포인트 &amp; 예상 면접 질문 보기
+    </button>
+    <div class="ai-result" style="display:none;"></div>
+  </div>
 
   <div class="card-actions">
     {% if job.link %}
-      <a href="{{ job.link }}" target="_blank" rel="noopener" class="btn-link">
-        공고 보러가기 →
-      </a>
+    <a href="{{ job.link }}" target="_blank" rel="noopener" class="btn-link">
+      공고 보러가기 →
+    </a>
     {% endif %}
-    {# 지원 기록 버튼 (기능 3 연동) #}
-    <button class="btn-apply"
-            onclick="quickApply(
-              {{ job.company | tojson }},
-              {{ job.title   | tojson }},
-              {{ (job.link or '') | tojson }},
-              {{ job.deadline | tojson }},
-              {{ (job.location or '') | tojson }},
-              {{ job.score }}
-            )">
-      지원 기록
-    </button>
   </div>
 
 </div>
@@ -105,212 +92,257 @@
 
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>채용 정보 분석기</title>
+  <title>JOBRADOR</title>
   <link rel="stylesheet" href="/static/style.css">
   {# Chart.js CDN (기능 5) #}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
+
 <body>
 
-<header class="site-header">
-  <div class="container" style="display:flex;justify-content:space-between;align-items:center;">
-    <div>
-      <h1>채용 정보 분석기</h1>
-      <p>조건을 설정하면 Python이 공고 수집·점수화·AI 콘텐츠 생성까지 자동으로 처리합니다</p>
+  <header class="site-header">
+    <div class="container">
+      <div>
+        <h1>JOBRADOR</h1>
+      </div>
     </div>
-    <a href="/tracker" class="nav-link">📋 지원 현황 트래커</a>
-  </div>
-</header>
+  </header>
 
-<main class="container">
+  <main class="container">
 
-  {# 플래시 메시지 #}
-  {% with messages = get_flashed_messages(with_categories=true) %}
+    {# 플래시 메시지 #}
+    {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
-      {% for category, message in messages %}
-        <div class="flash flash-{{ category }}">{{ message }}</div>
-      {% endfor %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
     {% endif %}
-  {% endwith %}
+    {% endwith %}
 
-  {# ── 검색 폼 ── #}
-  <section class="search-section">
-    <form action="/search" method="POST">
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="keyword">검색 키워드</label>
-          <input type="text" id="keyword" name="keyword"
-                 value="{{ search_params.get('keyword', '파이썬') }}"
-                 placeholder="예: 파이썬, Java, 데이터분석">
+    {# ── 검색 폼 ── #}
+    <section class="search-section">
+      <form action="/search" method="POST">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="region">희망 지역</label>
+            <select id="region" name="region">
+              <option value="">지역 무관</option>
+              {% for r in region_options %}
+              <option value="{{ r }}" {% if search_params.get('region')==r %}selected{% endif %}>{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="experience">내 경력</label>
+            <select id="experience" name="experience">
+              <option value="">무관</option>
+              {% for e in experience_options %}
+              <option value="{{ e }}" {% if search_params.get('experience')==e %}selected{% endif %}>{{ e }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="job_type">희망 고용형태</label>
+            <select id="job_type" name="job_type">
+              <option value="">고용형태 무관</option>
+              {% for jt in job_type_options %}
+              <option value="{{ jt }}" {% if search_params.get('job_type')==jt %}selected{% endif %}>{{ jt }}</option>
+              {% endfor %}
+            </select>
+          </div>
         </div>
         <div class="form-group">
-          <label for="region">지역</label>
-          <select id="region" name="region">
-            <option value="">전체 지역</option>
-            {% for r in region_options %}
-              <option value="{{ r }}" {% if search_params.get('region') == r %}selected{% endif %}>{{ r }}</option>
-            {% endfor %}
-          </select>
+          <label for="tech_stack">검색할 기술 스택 <small>(쉼표로 구분)</small></label>
+          <input type="text" id="tech_stack" name="tech_stack"
+            value="{{ search_params.get('tech_stack', default_tech) }}"
+            placeholder="예: Python, Java, React, AWS, Docker">
         </div>
-        <div class="form-group">
-          <label for="experience">경력</label>
-          <select id="experience" name="experience">
-            <option value="">무관</option>
-            {% for e in experience_options %}
-              <option value="{{ e }}" {% if search_params.get('experience') == e %}selected{% endif %}>{{ e }}</option>
-            {% endfor %}
-          </select>
+        <button type="submit" class="btn-search">공고 검색</button>
+      </form>
+    </section>
+
+    {# ── 결과 영역 ── #}
+    {% if result is not none %}
+
+    {% set jobs = result.jobs %}
+    {% set tech_stats = result.tech_stats %}
+    {% set chart_data = result.chart_data %}
+    {% set total = result.total %}
+
+    <section class="results-section" id="results">
+
+      <div class="summary-bar">
+        <div class="summary-item">
+          <span class="summary-num">{{ total }}</span>
+          <span class="summary-label">기술 매칭 공고</span>
         </div>
-        <div class="form-group">
-          <label for="job_type">고용형태</label>
-          <select id="job_type" name="job_type">
-            <option value="">전체</option>
-            {% for jt in job_type_options %}
-              <option value="{{ jt }}" {% if search_params.get('job_type') == jt %}selected{% endif %}>{{ jt }}</option>
-            {% endfor %}
-          </select>
-        </div>
+        {% if result.excel_download_url %}
+      <div class="summary-item summary-action">
+        <a href="{{ result.excel_download_url }}" class="btn-download">엑셀 다운로드</a>
+        <span class="summary-label">점수순 전체공고</span>
       </div>
-      <div class="form-group">
-        <label for="tech_stack">기술 스택 <small>(쉼표로 구분)</small></label>
-        <input type="text" id="tech_stack" name="tech_stack"
-               value="{{ search_params.get('tech_stack', default_tech) }}"
-               placeholder="예: Python, Java, React, AWS, Docker">
-      </div>
-      <button type="submit" class="btn-search">공고 검색</button>
-    </form>
-  </section>
-
-  {# ── 결과 영역 ── #}
-  {% if result is not none %}
-
-  {% set jobs          = result.jobs %}
-  {% set recommended   = result.recommended %}
-  {% set deadline_soon = result.deadline_soon %}
-  {% set tech_stats    = result.tech_stats %}
-  {% set chart_data    = result.chart_data %}
-  {% set total         = result.total %}
-
-  <section class="results-section" id="results">
-
-    <div class="summary-bar">
-      <div class="summary-item">
-        <span class="summary-num">{{ total }}</span>
-        <span class="summary-label">전체 공고</span>
-      </div>
-      <div class="summary-item urgent">
-        <span class="summary-num">{{ deadline_soon | length }}</span>
-        <span class="summary-label">마감 임박 (3일 이내)</span>
-      </div>
-      <div class="summary-item highlight">
-        <span class="summary-num">{{ recommended | length }}</span>
-        <span class="summary-label">추천 공고</span>
-      </div>
-    </div>
-
-    <div class="tabs">
-      <button class="tab active" onclick="showTab('recommended', this)">추천 공고 ({{ recommended | length }})</button>
-      <button class="tab" onclick="showTab('deadline', this)">마감 임박 ({{ deadline_soon | length }})</button>
-      <button class="tab" onclick="showTab('all', this)">전체 공고 ({{ total }})</button>
-      <button class="tab" onclick="showTab('stats', this)">기술 통계</button>
-      <button class="tab" onclick="showTab('dashboard', this)">대시보드</button>
-    </div>
-
-    {# 추천 공고 탭 #}
-    <div id="tab-recommended" class="tab-content active">
-      {% if recommended %}
-        <div class="job-grid">{% for job in recommended %}{{ render_card(job, show_ai=true) }}{% endfor %}</div>
-      {% else %}
-        <div class="empty-state">추천 공고가 없습니다. 검색 조건이나 기술 스택을 조정해보세요.</div>
       {% endif %}
-    </div>
-
-    {# 마감 임박 탭 #}
-    <div id="tab-deadline" class="tab-content">
-      {% if deadline_soon %}
-        <div class="job-grid">{% for job in deadline_soon %}{{ render_card(job, show_ai=false) }}{% endfor %}</div>
-      {% else %}
-        <div class="empty-state">3일 이내 마감 공고가 없습니다.</div>
+      {% if result.pdf_download_url %}
+      <div class="summary-item summary-action">
+        <a href="{{ result.pdf_download_url }}" class="btn-download">PDF 보고서 다운로드</a>
+        <span class="summary-label">자동 분석 보고서</span>
+      </div>
       {% endif %}
-    </div>
+      </div>
 
-    {# 전체 공고 탭 #}
-    <div id="tab-all" class="tab-content">
-      {% if jobs %}
+      <div class="tabs">
+        <button class="tab active" onclick="showTab('all', this)">전체 매칭 공고 ({{ total }})</button>
+        <button class="tab" onclick="showTab('stats', this)">기술 통계</button>
+        <button class="tab" onclick="showTab('dashboard', this)">대시보드</button>
+      </div>
+
+      {# 전체 매칭 공고 탭 #}
+      <div id="tab-all" class="tab-content active">
+        {% if jobs %}
         <div class="job-grid">{% for job in jobs %}{{ render_card(job, show_ai=false) }}{% endfor %}</div>
-      {% else %}
-        <div class="empty-state">수집된 공고가 없습니다.</div>
-      {% endif %}
-    </div>
+        {% else %}
+        <div class="empty-state">입력한 기술 스택이 포함된 공고가 없습니다.</div>
+        {% endif %}
+      </div>
 
-    {# 기술 통계 탭 (기존 CSS 바 차트 유지) #}
-    <div id="tab-stats" class="tab-content">
-      <div class="stats-card">
-        <h3>기술 키워드 수요 현황</h3>
-        {% if tech_stats %}
+      {# 기술 통계 탭 (기존 CSS 바 차트 유지) #}
+      <div id="tab-stats" class="tab-content">
+        <div class="stats-card">
+          <h3>기술 키워드 수요 현황</h3>
+          {% if tech_stats %}
           {% set max_count = tech_stats[0][1] %}
           <div class="stat-bars">
             {% for name, count in tech_stats %}
             <div class="stat-row">
               <span class="stat-name">{{ name }}</span>
               <div class="stat-track">
-                <div class="stat-fill" style="width: {{ (count / max_count * 100) | int }}%">
+                <div class="stat-fill" data-width="{{ (count / max_count * 100) | int }}">
                   <span class="stat-count">{{ count }}개</span>
                 </div>
               </div>
             </div>
             {% endfor %}
           </div>
-        {% else %}
+          {% else %}
           <p class="empty-state">통계 데이터가 없습니다.</p>
-        {% endif %}
+          {% endif %}
+        </div>
       </div>
-    </div>
 
-    {# ── 대시보드 탭 (기능 5: Chart.js) ── #}
-    <div id="tab-dashboard" class="tab-content">
-      <div class="dashboard-grid">
+      {# ── 대시보드 탭 (기능 5: Chart.js) ── #}
+      <div id="tab-dashboard" class="tab-content">
+        <div class="dashboard-grid">
 
-        <div class="chart-card">
-          <h3>기술 키워드 TOP {{ chart_data.tech.labels | length }}</h3>
-          <canvas id="chart-tech" height="320"></canvas>
+          <div class="chart-card">
+            <h3>기술 키워드 TOP {{ chart_data.tech.labels | length }}</h3>
+            <canvas id="chart-tech" height="320"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <h3>적합도 점수 분포</h3>
+            <canvas id="chart-score" height="260"></canvas>
+          </div>
+
+          {% if chart_data.source.labels | length > 1 %}
+          <div class="chart-card">
+            <h3>수집 출처별 공고 수</h3>
+            <canvas id="chart-source" height="260"></canvas>
+          </div>
+          {% endif %}
+
         </div>
-
-        <div class="chart-card">
-          <h3>고용형태 분포</h3>
-          <canvas id="chart-jtype" height="260"></canvas>
-        </div>
-
-        <div class="chart-card">
-          <h3>적합도 점수 분포</h3>
-          <canvas id="chart-score" height="260"></canvas>
-        </div>
-
-        {% if chart_data.source.labels | length > 1 %}
-        <div class="chart-card">
-          <h3>수집 출처별 공고 수</h3>
-          <canvas id="chart-source" height="260"></canvas>
-        </div>
-        {% endif %}
-
       </div>
-    </div>
 
-  </section>
+    </section>
 
-  {# Chart.js 데이터 (JSON 임베딩) #}
-  <script id="chart-json" type="application/json">{{ chart_data | tojson }}</script>
+    {# Chart.js 데이터 (JSON 임베딩) #}
+    <script id="chart-json" type="application/json">{{ chart_data | tojson }}</script>
 
-  {% endif %}
+    {% endif %}
 
-</main>
+  </main>
 
-{# 지원 기록 완료 토스트 #}
-<div id="apply-toast" class="toast" style="display:none;"></div>
+  <script src="/static/app.js"></script>
+  <script>
+    async function loadAiContent(btn) {
+      const resultBox = btn.nextElementSibling;
 
-<script src="/static/app.js"></script>
+      // 이미 로드됐으면 토글
+      if (resultBox.style.display === 'block') {
+        resultBox.style.display = 'none';
+        btn.textContent = '▶ 자소서 포인트 & 예상 면접 질문 보기';
+        return;
+      }
+
+      // 이미 내용이 있으면 바로 펼침
+      if (resultBox.innerHTML.trim()) {
+        resultBox.style.display = 'block';
+        btn.textContent = '▼ 자소서 포인트 & 예상 면접 질문 닫기';
+        return;
+      }
+
+      btn.disabled = true;
+  btn.textContent = '생성 중....';
+
+      try {
+        let job;
+        try {
+          job = JSON.parse(btn.dataset.job);
+        } catch (parseErr) {
+          throw new Error('공고 데이터 파싱 실패: ' + parseErr.message);
+        }
+
+        const res = await fetch('/api/ai-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(job),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`서버 오류 ${res.status}: ${errText.slice(0, 200)}`);
+        }
+
+        const data = await res.json();
+
+    const points = (data.cover_letter_points || [])
+      .map(p => `<li>${p}</li>`).join('');
+    const questions = (data.interview_questions || [])
+      .map(q => `<li>${q}</li>`).join('');
+    const reportLink = data.report_download_url
+      ? `<div class="ai-report-actions">
+           <a class="btn-link" href="${data.report_download_url}">PDF 보고서 다운로드 →</a>
+         </div>`
+      : '';
+
+    resultBox.innerHTML = `
+      <div class="ai-content">
+        <div class="ai-block">
+          <h4>📝 자기소개서 작성 포인트</h4>
+          <ol>${points}</ol>
+        </div>
+        <div class="ai-block">
+          <h4>💬 예상 면접 질문</h4>
+          <ol>${questions}</ol>
+        </div>
+      </div>
+      ${reportLink}`;
+        resultBox.style.display = 'block';
+        btn.textContent = '▼ 자소서 포인트 & 예상 면접 질문 닫기';
+      } catch (e) {
+        console.error('[AI Content Error]', e);
+        resultBox.innerHTML = `<p style="color:red;">생성 실패: ${e.message}</p>`;
+        resultBox.style.display = 'block';
+        btn.textContent = '▶ 자소서 포인트 & 예상 면접 질문 보기';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
 </body>
+
 </html>

@@ -3,7 +3,7 @@ ai_generator.py
 공고 기반 자기소개서 포인트 및 예상 면접 질문 생성 모듈
 
 우선순위:
-  1. ANTHROPIC_API_KEY 설정 시 → Claude API (claude-haiku-4-5-20251001) 사용
+  1. GATEWAY_API_KEY 설정 시 → 충남대 API Gateway (Claude) 사용
   2. API 키 미설정 또는 호출 실패 시 → 템플릿 기반 폴백
 """
 
@@ -16,7 +16,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GATEWAY_API_KEY  = os.getenv("GATEWAY_API_KEY", "")
+GATEWAY_BASE_URL = "https://factchat-cloud.mindlogic.ai/v1/gateway/claude"
+GATEWAY_MODEL    = "claude-haiku-4-5-20251001"
 logger = logging.getLogger(__name__)
 
 
@@ -24,14 +26,17 @@ logger = logging.getLogger(__name__)
 # Claude API 기반 생성 (기능 4)
 # ============================================================
 def _ai_generate_claude(job: dict) -> tuple[list[str], list[str]]:
-    """Claude API로 자소서 포인트·면접 질문 생성 (프롬프트 캐싱 적용)"""
+    """충남대 API Gateway(Claude)로 자소서 포인트·면접 질문 생성"""
     try:
         import anthropic
     except ImportError:
         logger.warning("anthropic 패키지 미설치. pip install anthropic")
         return [], []
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(
+        api_key=GATEWAY_API_KEY,
+        base_url=GATEWAY_BASE_URL,
+    )
 
     job_summary = (
         f"회사: {job.get('company', '')}\n"
@@ -46,23 +51,17 @@ def _ai_generate_claude(job: dict) -> tuple[list[str], list[str]]:
 
     try:
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=[
-                {
-                    "type": "text",
-                    "text": (
-                        "당신은 취업 전문 컨설턴트입니다. 채용공고를 분석하여 "
-                        "맞춤형 자기소개서 작성 포인트와 예상 면접 질문을 한국어로 생성합니다.\n"
-                        "규칙:\n"
-                        "- 반드시 순수 JSON만 응답 (다른 텍스트 없이)\n"
-                        "- cover_letter_points: 최대 8개, 구체적이고 실용적인 작성 가이드\n"
-                        "- interview_questions: 최대 12개, 기술+인성 균형\n"
-                        "- 각 항목은 완성된 한국어 문장으로 작성"
-                    ),
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            model=GATEWAY_MODEL,
+            max_tokens=2048,
+            system=(
+                "당신은 취업 전문 컨설턴트입니다. 채용공고를 분석하여 "
+                "맞춤형 자기소개서 작성 포인트와 예상 면접 질문을 한국어로 생성합니다.\n"
+                "규칙:\n"
+                "- 반드시 순수 JSON만 응답 (설명 텍스트, 마크다운 코드블록 없이)\n"
+                "- cover_letter_points: 최대 8개, 구체적이고 실용적인 작성 가이드\n"
+                "- interview_questions: 최대 12개, 기술+인성 균형\n"
+                "- 각 항목은 완성된 한국어 문장으로 작성"
+            ),
             messages=[
                 {
                     "role": "user",
@@ -77,16 +76,25 @@ def _ai_generate_claude(job: dict) -> tuple[list[str], list[str]]:
         )
 
         text = response.content[0].text.strip()
+        logger.debug(f"Gateway 원본 응답: {text[:300]}")
+
         # 마크다운 코드 블록 제거
         text = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+
+        # 응답 중간에 JSON이 섞인 경우 { } 범위만 추출
+        match = re.search(r"\{[\s\S]*\}", text)
+        if match:
+            text = match.group(0)
+
         data = json.loads(text)
         return (
             data.get("cover_letter_points", [])[:8],
             data.get("interview_questions", [])[:12],
         )
 
-    except json.JSONDecodeError:
-        logger.warning("Claude 응답 JSON 파싱 실패, 템플릿 폴백 사용")
+    except json.JSONDecodeError as e:
+        logger.warning(f"Claude 응답 JSON 파싱 실패 ({e}), 템플릿 폴백 사용")
+        logger.debug(f"파싱 실패 원본 텍스트: {text!r}")
         return [], []
     except Exception as e:
         logger.warning(f"Claude API 호출 실패: {e}, 템플릿 폴백 사용")
@@ -199,13 +207,11 @@ def _extract_key_phrases(text: str, max_items: int = 5) -> list[str]:
 # ============================================================
 def add_ai_content(jobs: list[dict]) -> list[dict]:
     """전체 공고 리스트에 자소서 포인트·면접 질문 추가"""
-    use_claude = bool(
-        ANTHROPIC_API_KEY and ANTHROPIC_API_KEY != "여기에_Claude_API키_입력"
-    )
+    use_claude = bool(GATEWAY_API_KEY)
     if use_claude:
-        print("[AI] Claude API로 자소서·면접 질문 생성 중...")
+        print("[AI] 충남대 Gateway(Claude)로 자소서·면접 질문 생성 중...")
     else:
-        print("[AI] 템플릿 기반으로 자소서·면접 질문 생성 중... (Claude API 키 미설정)")
+        print("[AI] 템플릿 기반으로 자소서·면접 질문 생성 중... (GATEWAY_API_KEY 미설정)")
 
     for job in jobs:
         cl_points, cl_questions = [], []

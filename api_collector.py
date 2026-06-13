@@ -4,8 +4,7 @@ api_collector.py  ―  채용정보 수집 모듈 (v3 초안)
 수집 우선순위:
   1. 원티드   ─ 비공식 JSON API   (설정 불필요, 기본 활성화)  ★ IT/스타트업 중심
   2. 잡코리아 ─ HTML 스크래핑     (설정 불필요, 기본 활성화)  ★ 전 직군 커버
-  3. 워크넷   ─ 공공 API          (WORKNET_API_KEY 설정 시)   보조 소스
-  4. 사람인   ─ 공식 API          (SARAMIN_API_KEY 설정 시)   보조 소스
+  3. 사람인   ─ 공식 API          (SARAMIN_API_KEY 설정 시)   보조 소스
 
 [초안 주의사항]
   - 잡코리아 HTML 셀렉터는 사이트 구조 변경 시 수정이 필요합니다.
@@ -19,7 +18,6 @@ import re
 import json
 import time
 import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -29,9 +27,7 @@ load_dotenv()
 # ──────────────────────────────────────────────
 # 환경변수 (선택적 소스)
 # ──────────────────────────────────────────────
-WORKNET_API_KEY  = os.getenv("WORKNET_API_KEY", "")
 SARAMIN_API_KEY  = os.getenv("SARAMIN_API_KEY", "")
-WORKNET_BASE_URL = "https://openapi.work24.go.kr/getJobInfo"
 SARAMIN_BASE_URL = "https://oapi.saramin.co.kr/job-search"
 
 # ──────────────────────────────────────────────
@@ -116,8 +112,11 @@ def fetch_wanted_jobs(keyword: str, region: str = "",
         # API 레벨 지역 필터 대신 location 문자열로 후처리
         if region:
             region_kw = _WANTED_REGION_MAP.get(region, region)
-            jobs = [j for j in jobs if region_kw in j.get("location", "")
-                    or not j.get("location")]   # 지역 미표기 공고는 포함
+            # API 응답의 location이 "서울"일 수도, "서울특별시"일 수도 있어 양방향 비교
+            jobs = [j for j in jobs if
+                    region in j.get("location", "") or
+                    region_kw in j.get("location", "") or
+                    not j.get("location")]   # 지역 미표기 공고는 포함
         return jobs
 
     except requests.RequestException as e:
@@ -151,7 +150,7 @@ def _parse_wanted_json(data: dict) -> list[dict]:
         jobs.append({
             "source":       "원티드",
             "company":      company.get("name", ""),
-            "title":        item.get("title", ""),
+            "title":        item.get("position", "") or item.get("title", ""),
             "location":     (address.get("location") or
                              address.get("full_location", "")),
             "job_type":     "",   # 원티드 목록 API에는 고용형태 미포함
@@ -226,6 +225,13 @@ _JK_SELECTORS = {
     ],
 }
 
+# 잡코리아 CardJob 구조(2025년 이후 신규) 내부에서 링크를 찾는 href 패턴
+_JK_CARDJOB_HREF_PATTERNS = [
+    "a[href*='/Recruit/GI_Read']",
+    "a[href*='/Recruit/']",
+    "a[href*='jobkorea.co.kr/recruit']",
+]
+
 # 잡코리아 지역 파라미터 코드
 _JK_REGION_CODE = {
     "서울": "101000", "경기": "102000", "인천": "108000",
@@ -266,6 +272,14 @@ def fetch_jobkorea_jobs(keyword: str, region: str = "",
             _save_debug_html(resp.text, "jobkorea_debug.html")
             print("[잡코리아] 공고 파싱 결과 없음 → output/jobkorea_debug.html 확인")
 
+        # 서버 파라미터(local=)가 무시되는 경우가 있어 클라이언트 사이드에서도 지역 필터 적용
+        if region and jobs:
+            region_kw = _WANTED_REGION_MAP.get(region, region)  # 예: "경기" → "경기도"
+            jobs = [j for j in jobs if
+                    region in j.get("location", "") or
+                    region_kw in j.get("location", "") or
+                    not j.get("location")]  # 위치 미표기 공고는 포함
+
         return jobs
 
     except requests.RequestException as e:
@@ -278,10 +292,15 @@ def fetch_jobkorea_jobs(keyword: str, region: str = "",
 
 def _parse_jobkorea_html(html: str) -> list[dict]:
     """잡코리아 HTML → 표준 공고 딕셔너리 리스트"""
-    soup  = BeautifulSoup(html, "lxml")
-    jobs  = []
+    soup = BeautifulSoup(html, "lxml")
 
-    # 공고 아이템 찾기 (fallback 순서로 시도)
+    # ── 신규 CardJob 구조 우선 시도 (2025년 이후) ──
+    card_items = soup.select("[data-sentry-component='CardJob']")
+    if card_items:
+        return _parse_cardjob_items(card_items)
+
+    # ── 구 구조 fallback ──
+    jobs  = []
     items = []
     for selector in _JK_SELECTORS["items"]:
         items = soup.select(selector)
@@ -319,9 +338,9 @@ def _parse_jobkorea_html(html: str) -> list[dict]:
                     info_cells = cells
                     break
 
-            location   = info_cells[0] if len(info_cells) > 0 else ""
-            exp_text   = info_cells[1] if len(info_cells) > 1 else ""
-            job_type   = info_cells[2] if len(info_cells) > 2 else ""
+            location = info_cells[0] if len(info_cells) > 0 else ""
+            exp_text = info_cells[1] if len(info_cells) > 1 else ""
+            job_type = info_cells[2] if len(info_cells) > 2 else ""
 
             # ── 마감일 ──
             deadline_raw = _first_text(item, _JK_SELECTORS["deadline"])
@@ -348,6 +367,77 @@ def _parse_jobkorea_html(html: str) -> list[dict]:
         except Exception:
             continue
 
+    return jobs
+
+
+def _parse_cardjob_items(card_items) -> list[dict]:
+    """잡코리아 CardJob 카드 구조(2025+) 파싱"""
+    jobs = []
+    for item in card_items:
+        try:
+            # ── 공고 제목 + 링크 ──
+            title_el = None
+            for pattern in _JK_CARDJOB_HREF_PATTERNS:
+                title_el = item.select_one(pattern)
+                if title_el:
+                    break
+
+            # 패턴 매칭 실패 시 가장 긴 텍스트를 가진 링크 선택
+            if not title_el:
+                all_links = [a for a in item.select("a") if a.get("href")]
+                if all_links:
+                    title_el = max(all_links, key=lambda a: len(a.get_text(strip=True)))
+
+            title = title_el.get_text(strip=True) if title_el else ""
+            href  = title_el.get("href", "") if title_el else ""
+            if not title:
+                continue
+
+            if href.startswith("/"):
+                link = f"https://www.jobkorea.co.kr{href}"
+            elif href.startswith("http"):
+                link = href
+            else:
+                link = ""
+
+            # ── 회사명: data-sentry-element 또는 클래스명 키워드로 탐색 ──
+            company_el = (
+                item.select_one("[data-sentry-element='CorpName']") or
+                item.select_one("[class*='corp']") or
+                item.select_one("[class*='company']") or
+                item.select_one("[class*='Corp']") or
+                item.select_one("[class*='Company']")
+            )
+            company = company_el.get_text(strip=True) if company_el else ""
+
+            # ── 근무지·경력·고용형태: span 텍스트 목록에서 추출 ──
+            spans = [s.get_text(strip=True) for s in item.select("span")
+                     if s.get_text(strip=True) and s.get_text(strip=True) != title]
+            location = spans[0] if len(spans) > 0 else ""
+            exp_text = spans[1] if len(spans) > 1 else ""
+            job_type = spans[2] if len(spans) > 2 else ""
+
+            # ── 마감일 ──
+            deadline_raw = _first_text(item, _JK_SELECTORS["deadline"])
+            deadline     = _parse_jk_date(deadline_raw)
+
+            jobs.append({
+                "source":       "잡코리아",
+                "company":      company,
+                "title":        title,
+                "location":     location,
+                "job_type":     job_type,
+                "experience":   exp_text,
+                "deadline":     deadline,
+                "salary":       "",
+                "description":  f"{title} {exp_text}".strip(),
+                "requirements": "",
+                "preferred":    "",
+                "link":         link,
+                "posted_date":  "",
+            })
+        except Exception:
+            continue
     return jobs
 
 
@@ -399,81 +489,6 @@ def _save_debug_html(html: str, filename: str) -> None:
         f.write(html)
 
 
-# ══════════════════════════════════════════════
-# 3. 워크넷 공공 API  (선택적 보조 소스)
-# ══════════════════════════════════════════════
-def fetch_worknet_jobs(keyword: str, region: str = "", job_type: str = "",
-                       experience: str = "", page: int = 1,
-                       per_page: int = 100) -> list[dict]:
-    if not WORKNET_API_KEY or WORKNET_API_KEY == "여기에_워크넷_API키_입력":
-        return []
-
-    region_code_map = {
-        "서울": "I100", "경기": "I200", "인천": "I300",
-        "부산": "I400", "대구": "I500", "광주": "I600",
-        "대전": "I700", "울산": "I800", "강원": "I900",
-        "충북": "J000", "충남": "J100", "전북": "J200",
-        "전남": "J300", "경북": "J400", "경남": "J500",
-        "제주": "J600", "세종": "J700",
-    }
-    job_type_code_map = {"정규직": "10", "계약직": "20", "인턴": "30", "아르바이트": "50"}
-    exp_code_map      = {"신입": "0", "경력": "1"}
-
-    params = {
-        "authKey":    WORKNET_API_KEY,
-        "callTp":     "L",
-        "returnType": "XML",
-        "keyword":    keyword,
-        "pageNo":     str(page),
-        "display":    str(per_page),
-    }
-    if region     in region_code_map:    params["region"]   = region_code_map[region]
-    if job_type   in job_type_code_map:  params["empTpCd"]  = job_type_code_map[job_type]
-    if experience in exp_code_map:       params["career"]   = exp_code_map[experience]
-
-    try:
-        resp = requests.get(WORKNET_BASE_URL, params=params, timeout=15)
-        resp.raise_for_status()
-        return _parse_worknet_xml(resp.text)
-    except Exception as e:
-        print(f"[워크넷] 호출 실패: {e}")
-        return []
-
-
-def _parse_worknet_xml(xml_text: str) -> list[dict]:
-    jobs = []
-    try:
-        root = ET.fromstring(xml_text)
-        for item in root.findall(".//item"):
-            job = {
-                "source":       "워크넷",
-                "company":      _get_text(item, "cmpnyNm"),
-                "title":        _get_text(item, "jobNm"),
-                "location":     _get_text(item, "workRegionNm"),
-                "job_type":     _get_text(item, "empTpNm"),
-                "experience":   _get_text(item, "careerCondNm"),
-                "deadline":     _get_text(item, "rcptCloseDt"),
-                "salary":       _get_text(item, "sal"),
-                "description":  _get_text(item, "jobDesc"),
-                "requirements": _get_text(item, "qlfcCond"),
-                "preferred":    _get_text(item, "prefCond"),
-                "link":         _get_text(item, "wantedAuthNo"),
-                "posted_date":  _get_text(item, "postDt"),
-            }
-            if job["link"]:
-                job["link"] = (
-                    f"https://www.work24.go.kr/wk/a/b/1200/sjDetailView.do"
-                    f"?wantedAuthNo={job['link']}"
-                )
-            jobs.append(job)
-    except ET.ParseError as e:
-        print(f"[워크넷] XML 파싱 실패: {e}")
-    return jobs
-
-
-def _get_text(element, tag: str) -> str:
-    node = element.find(tag)
-    return node.text.strip() if node is not None and node.text else ""
 
 
 # ══════════════════════════════════════════════
@@ -561,73 +576,76 @@ def collect_all_jobs(config: dict) -> list[dict]:
     활성 소스:
       - 원티드 (기본)
       - 잡코리아 (기본)
-      - 워크넷 (WORKNET_API_KEY 설정 시)
       - 사람인 (SARAMIN_API_KEY 설정 시)
     """
-    keyword    = config["search"]["keyword"]
     region     = config["search"].get("region", "")
     job_type   = config["search"].get("job_type", "")
     experience = config["search"].get("experience", "")
+    search_terms = _build_search_terms(config)
+    collection_region = ""
+    collection_experience = ""
     all_jobs: list[dict] = []
+    wanted: list[dict] = []
+    jk_jobs: list[dict] = []
 
-    # ── 1. 원티드 ──────────────────────────────
-    print(f"[1/4] 원티드 수집 중... 키워드: '{keyword}'")
-    wanted = fetch_wanted_jobs(keyword, region, experience, page=1, per_page=100)
-    # 100개 꽉 찬 경우 추가 페이지 (최대 2페이지 추가)
-    for p in range(2, 4):
-        if len(wanted) % 100 != 0:
-            break
-        time.sleep(0.7)
-        more = fetch_wanted_jobs(keyword, region, experience, page=p, per_page=100)
-        if not more:
-            break
-        wanted.extend(more)
-    print(f"      → {len(wanted)}개 수집")
-    all_jobs.extend(wanted)
+    if region or job_type or experience:
+        print("[수집] 지역/경력/고용형태는 수집 필터로 쓰지 않고 점수화 기준으로만 적용합니다.")
 
-    # ── 2. 잡코리아 ────────────────────────────
-    time.sleep(1.0)   # 서버 부하 분산
-    print(f"[2/4] 잡코리아 스크래핑 중... 키워드: '{keyword}'")
-    jk_jobs = fetch_jobkorea_jobs(keyword, region, experience, page=1)
-    # 결과가 있으면 최대 4페이지 추가 수집
-    for p in range(2, 6):
-        if not jk_jobs or len(jk_jobs) < (p - 1) * 15:
-            break
-        time.sleep(1.0)
-        more = fetch_jobkorea_jobs(keyword, region, experience, page=p)
-        if not more:
-            break
-        jk_jobs.extend(more)
-    print(f"      → {len(jk_jobs)}개 수집")
-    all_jobs.extend(jk_jobs)
+    if not search_terms:
+        print("[경고] 검색할 기술 스택이 없습니다.")
+        return []
 
-    # ── 3. 워크넷 (API 키 있을 때만) ──────────
-    if WORKNET_API_KEY and WORKNET_API_KEY != "여기에_워크넷_API키_입력":
-        time.sleep(0.5)
-        print(f"[3/4] 워크넷 수집 중...")
-        wn = fetch_worknet_jobs(keyword, region, job_type, experience)
+    print(f"[수집] 기술 스택 검색어: {', '.join(search_terms)}")
+
+    for idx, term in enumerate(search_terms, 1):
+        if idx > 1:
+            time.sleep(0.7)
+        print(f"\n[기술 {idx}/{len(search_terms)}] '{term}' 검색")
+
+        # ── 1. 원티드 ──────────────────────────────
+        print("[1/3] 원티드 수집 중...")
+        term_wanted = fetch_wanted_jobs(
+            term, collection_region, collection_experience, page=1, per_page=100
+        )
         for p in range(2, 4):
-            if len(wn) % 100 != 0:
+            if not term_wanted or len(term_wanted) % 100 != 0:
                 break
-            time.sleep(0.5)
-            more = fetch_worknet_jobs(keyword, region, job_type, experience, page=p)
+            time.sleep(0.7)
+            more = fetch_wanted_jobs(
+                term, collection_region, collection_experience, page=p, per_page=100
+            )
             if not more:
                 break
-            wn.extend(more)
-        print(f"      → {len(wn)}개 수집")
-        all_jobs.extend(wn)
-    else:
-        print("[3/4] 워크넷 건너뜀 (API 키 미설정)")
+            term_wanted.extend(more)
+        print(f"      → {len(term_wanted)}개 수집")
+        wanted.extend(term_wanted)
+        all_jobs.extend(term_wanted)
 
-    # ── 4. 사람인 (API 키 있을 때만) ──────────
-    if SARAMIN_API_KEY and SARAMIN_API_KEY != "여기에_사람인_API키_입력":
-        time.sleep(0.5)
-        print(f"[4/4] 사람인 수집 중...")
-        sr = fetch_saramin_jobs(keyword, region, experience)
-        print(f"      → {len(sr)}개 수집")
-        all_jobs.extend(sr)
-    else:
-        print("[4/4] 사람인 건너뜀 (API 키 미설정)")
+        # ── 2. 잡코리아 ────────────────────────────
+        time.sleep(1.0)   # 서버 부하 분산
+        print("[2/3] 잡코리아 스크래핑 중...")
+        term_jk = fetch_jobkorea_jobs(term, collection_region, collection_experience, page=1)
+        for p in range(2, 6):
+            if not term_jk or len(term_jk) < (p - 1) * 15:
+                break
+            time.sleep(1.0)
+            more = fetch_jobkorea_jobs(term, collection_region, collection_experience, page=p)
+            if not more:
+                break
+            term_jk.extend(more)
+        print(f"      → {len(term_jk)}개 수집")
+        jk_jobs.extend(term_jk)
+        all_jobs.extend(term_jk)
+
+        # ── 3. 사람인 (API 키 있을 때만) ──────────
+        if SARAMIN_API_KEY and SARAMIN_API_KEY != "여기에_사람인_API키_입력":
+            time.sleep(0.5)
+            print("[3/3] 사람인 수집 중...")
+            sr = fetch_saramin_jobs(term, collection_region, collection_experience)
+            print(f"      → {len(sr)}개 수집")
+            all_jobs.extend(sr)
+        else:
+            print("[3/3] 사람인 건너뜀 (API 키 미설정)")
 
     # ── 결과 없을 때 샘플 데이터로 폴백 ────────
     if not all_jobs:
@@ -637,6 +655,16 @@ def collect_all_jobs(config: dict) -> list[dict]:
     print(f"\n[수집 완료] 총 {len(all_jobs)}개 (원티드 {len(wanted)} | "
           f"잡코리아 {len(jk_jobs)} | 기타 {len(all_jobs) - len(wanted) - len(jk_jobs)})")
     return all_jobs
+
+
+def _build_search_terms(config: dict) -> list[str]:
+    search = config.get("search", {})
+    terms = [
+        term.strip()
+        for term in search.get("tech_stack", [])
+        if isinstance(term, str) and term.strip()
+    ]
+    return list(dict.fromkeys(terms))
 
 
 # ══════════════════════════════════════════════

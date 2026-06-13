@@ -18,6 +18,9 @@ lxml>=4.9.0
 # Excel 저장
 openpyxl>=3.1.0
 
+# PDF 보고서 생성
+Pillow>=10.0.0
+
 # 환경변수 관리
 python-dotenv>=1.0.0
 

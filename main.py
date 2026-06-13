@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from api_collector import collect_all_jobs
 from data_parser import parse_and_clean, filter_expired, filter_deadline_soon
-from analyzer import score_jobs, get_recommended, get_tech_stats
+from analyzer import score_jobs, filter_by_user_tech, get_recommended, get_tech_stats
 from ai_generator import add_ai_content
 from storage import save_all
 from notifier import send_deadline_alert
@@ -71,7 +71,8 @@ def main() -> None:
 
     # 1. 설정 로드
     config = load_config("config.json")
-    print(f"\n[설정] 키워드: {config['search']['keyword']} | "
+    tech_stack = ", ".join(config["search"].get("tech_stack", []))
+    print(f"\n[설정] 기술 스택: {tech_stack} | "
           f"지역: {config['search'].get('region','')} | "
           f"경력: {config['search'].get('experience','')}")
 
@@ -85,6 +86,7 @@ def main() -> None:
     print("\n[정제] 데이터 파싱 및 중복 제거 중...")
     jobs = parse_and_clean(raw_jobs)
     jobs = filter_expired(jobs)  # 마감된 공고 제거
+    jobs = filter_by_user_tech(jobs, config)
 
     # 4. 적합도 점수화
     print("[분석] 적합도 점수 계산 중...")

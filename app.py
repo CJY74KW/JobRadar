@@ -5,25 +5,31 @@ app.py
 
 import sys
 import io
+import logging
+import os
+import uuid
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s:%(name)s:%(message)s",
+    stream=sys.stderr,
+)
+
 from collections import Counter
 
-from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
+from flask import Flask, render_template, request, jsonify, flash, send_file, abort
 
 from api_collector import collect_all_jobs
 from data_parser   import parse_and_clean, filter_expired, filter_deadline_soon
-from analyzer      import score_jobs, get_recommended, get_tech_stats
-from ai_generator  import add_ai_content
-from tracker       import (
-    init_tracker_db, add_application, get_all_applications,
-    get_applications_by_status, update_application,
-    delete_application, get_tracker_stats, STATUSES, STATUS_COLOR,
-)
+from analyzer      import score_jobs, filter_by_user_tech, get_recommended, get_tech_stats
+from ai_generator  import _ai_generate_claude, generate_cover_letter_points, generate_interview_questions
+from pdf_report    import save_search_pdf_report, save_job_ai_pdf_report
+from storage       import save_all_jobs_excel
 
 app = Flask(__name__)
-app.secret_key = "job-tracker-secret-key-2026"
+app.secret_key = "job-search-secret-key-2026"
 
 # ============================================================
 # 공통 상수
@@ -36,6 +42,9 @@ REGION_OPTIONS     = [
 JOB_TYPE_OPTIONS   = ["정규직", "계약직", "인턴", "아르바이트"]
 EXPERIENCE_OPTIONS = ["신입", "경력"]
 DEFAULT_TECH       = "Python, SQL, React, AWS, Django"
+ALL_JOBS_EXCEL_PATH = "output/채용공고_전체.xlsx"
+ALL_JOBS_PDF_PATH = "output/채용공고_보고서.pdf"
+REPORTS_DIR = "output/reports"
 
 
 # ============================================================
@@ -46,41 +55,57 @@ def build_config(form) -> dict:
     tech_stack = [t.strip() for t in tech_raw.split(",") if t.strip()]
     return {
         "search": {
-            "keyword":    form.get("keyword", "파이썬").strip() or "파이썬",
             "region":     form.get("region", ""),
             "job_type":   form.get("job_type", ""),
             "experience": form.get("experience", ""),
             "tech_stack": tech_stack,
         },
         "scoring": {
-            "weight_job_match":    40,
-            "weight_region_match": 20,
-            "weight_tech_match":   30,
-            "weight_deadline":     10,
+            "tech":       45,
+            "experience": 10,
+            "job_type":   7,
+            "region":     8,
+            "deadline":   3,
+            "quality":    2,
         },
         "alert": {"deadline_days": 3},
+        "output": {
+            "all_excel_path": ALL_JOBS_EXCEL_PATH,
+            "all_pdf_path":   ALL_JOBS_PDF_PATH,
+        },
     }
 
 
 def run_pipeline(config: dict) -> dict:
     """채용 공고 전체 처리 파이프라인"""
+    excel_path = config["output"]["all_excel_path"]
+    pdf_path = config["output"]["all_pdf_path"]
     raw_jobs = collect_all_jobs(config)
     if not raw_jobs:
+        chart_data = _build_chart_data([], [])
+        save_all_jobs_excel([], excel_path)
+        save_search_pdf_report([], [], chart_data, pdf_path, config.get("search", {}))
         return {
             "jobs": [], "recommended": [], "deadline_soon": [],
-            "tech_stats": [], "chart_data": {}, "total": 0,
+            "tech_stats": [], "chart_data": chart_data, "total": 0,
+            "excel_path": excel_path,
+            "excel_download_url": "/download/all-jobs",
+            "pdf_path": pdf_path,
+            "pdf_download_url": "/download/all-jobs-pdf",
         }
 
     jobs          = parse_and_clean(raw_jobs)
     jobs          = filter_expired(jobs)
+    jobs          = filter_by_user_tech(jobs, config)
     jobs          = score_jobs(jobs, config)
     deadline_soon = filter_deadline_soon(jobs, days=3)
     recommended   = get_recommended(jobs, top_n=10)
-    recommended   = add_ai_content(recommended)
     tech_stats    = get_tech_stats(jobs)[:15]
+    save_all_jobs_excel(jobs, excel_path, tech_stats)
 
     # ── 대시보드용 차트 데이터 계산 (기능 5) ──
     chart_data = _build_chart_data(jobs, tech_stats)
+    save_search_pdf_report(jobs, tech_stats, chart_data, pdf_path, config.get("search", {}))
 
     return {
         "jobs":          jobs,
@@ -89,6 +114,10 @@ def run_pipeline(config: dict) -> dict:
         "tech_stats":    tech_stats,
         "chart_data":    chart_data,
         "total":         len(jobs),
+        "excel_path":    excel_path,
+        "excel_download_url": "/download/all-jobs",
+        "pdf_path":      pdf_path,
+        "pdf_download_url": "/download/all-jobs-pdf",
     }
 
 
@@ -98,17 +127,24 @@ def _build_chart_data(jobs: list[dict], tech_stats: list[tuple]) -> dict:
     tech_labels  = [t[0] for t in tech_stats]
     tech_values  = [t[1] for t in tech_stats]
 
-    # 고용형태 분포
-    jt_counter   = Counter(j.get("job_type", "기타") or "기타" for j in jobs)
-    jt_labels    = list(jt_counter.keys())
-    jt_values    = list(jt_counter.values())
-
     # 적합도 점수 분포 (구간별)
     bins         = ["0-20", "21-40", "41-60", "61-80", "81-100"]
     bin_counts   = [0] * 5
     for j in jobs:
-        s = j.get("score", 0)
-        idx = min(int(s // 20), 4)
+        try:
+            s = float(j.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            s = 0
+        if s <= 20:
+            idx = 0
+        elif s <= 40:
+            idx = 1
+        elif s <= 60:
+            idx = 2
+        elif s <= 80:
+            idx = 3
+        else:
+            idx = 4
         bin_counts[idx] += 1
 
     # 출처별 공고 수
@@ -116,7 +152,6 @@ def _build_chart_data(jobs: list[dict], tech_stats: list[tuple]) -> dict:
 
     return {
         "tech":   {"labels": tech_labels,  "values": tech_values},
-        "jtype":  {"labels": jt_labels,    "values": jt_values},
         "score":  {"labels": bins,         "values": bin_counts},
         "source": {"labels": list(src_counter.keys()),
                    "values": list(src_counter.values())},
@@ -132,6 +167,42 @@ def make_template_ctx(result=None, form=None) -> dict:
         "result":             result,
         "search_params":      form or {},
     }
+
+
+# ============================================================
+# AI 콘텐츠 온디맨드 API
+# ============================================================
+@app.route("/api/ai-content", methods=["POST"])
+def api_ai_content():
+    """공고 카드에서 버튼 클릭 시 자소서 포인트·면접 질문을 즉시 생성"""
+    try:
+        job = request.get_json(force=True, silent=True) or {}
+        if not job:
+            return jsonify({"error": "job data required"}), 400
+
+        cl_points, cl_questions = _ai_generate_claude(job)
+        if not cl_points:
+            cl_points    = generate_cover_letter_points(job)
+            cl_questions = generate_interview_questions(job)
+
+        report_url = ""
+        try:
+            os.makedirs(REPORTS_DIR, exist_ok=True)
+            report_name = f"job_report_{uuid.uuid4().hex}.pdf"
+            report_path = os.path.join(REPORTS_DIR, report_name)
+            save_job_ai_pdf_report(job, cl_points, cl_questions, report_path)
+            report_url = f"/download/reports/{report_name}"
+        except Exception as report_error:
+            app.logger.error(f"[ai-content-report] PDF 생성 오류: {report_error}")
+
+        return jsonify({
+            "cover_letter_points": cl_points,
+            "interview_questions": cl_questions,
+            "report_download_url": report_url,
+        })
+    except Exception as e:
+        app.logger.error(f"[ai-content] 오류: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================================================
@@ -153,83 +224,49 @@ def search():
     return render_template("index.html", **make_template_ctx(result, request.form))
 
 
-# ============================================================
-# 지원 현황 트래커 라우트 (기능 3)
-# ============================================================
-@app.route("/tracker")
-def tracker():
-    from datetime import datetime
-    stats   = get_tracker_stats()
-    grouped = get_applications_by_status()
-    return render_template(
-        "tracker.html",
-        statuses=STATUSES,
-        status_color=STATUS_COLOR,
-        grouped=grouped,
-        stats=stats,
-        now=datetime.now(),
+@app.route("/download/all-jobs", methods=["GET"])
+def download_all_jobs_excel():
+    path = os.path.abspath(ALL_JOBS_EXCEL_PATH)
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=os.path.basename(path),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 
-@app.route("/tracker/add", methods=["POST"])
-def tracker_add():
-    company  = request.form.get("company", "").strip()
-    title    = request.form.get("title", "").strip()
-    if not company or not title:
-        flash("회사명과 공고명은 필수입니다.", "error")
-        return redirect(url_for("tracker"))
-
-    add_application(
-        company=company,
-        title=title,
-        link=request.form.get("link", ""),
-        status=request.form.get("status", "지원완료"),
-        deadline=request.form.get("deadline", ""),
-        location=request.form.get("location", ""),
-        score=float(request.form.get("score", 0) or 0),
-        notes=request.form.get("notes", ""),
+@app.route("/download/all-jobs-pdf", methods=["GET"])
+def download_all_jobs_pdf():
+    path = os.path.abspath(ALL_JOBS_PDF_PATH)
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=os.path.basename(path),
+        mimetype="application/pdf",
     )
-    flash(f"'{company} - {title}' 지원 기록이 추가되었습니다.", "success")
-    return redirect(url_for("tracker"))
 
 
-@app.route("/tracker/update/<int:app_id>", methods=["POST"])
-def tracker_update(app_id: int):
-    status = request.form.get("status")
-    notes  = request.form.get("notes")
-    update_application(app_id, status=status, notes=notes)
-    return redirect(url_for("tracker"))
+@app.route("/download/reports/<filename>", methods=["GET"])
+def download_job_pdf_report(filename: str):
+    safe_name = os.path.basename(filename)
+    if safe_name != filename or not safe_name.lower().endswith(".pdf"):
+        abort(404)
 
+    base_dir = os.path.abspath(REPORTS_DIR)
+    path = os.path.abspath(os.path.join(base_dir, safe_name))
+    if os.path.commonpath([base_dir, path]) != base_dir or not os.path.exists(path):
+        abort(404)
 
-@app.route("/tracker/delete/<int:app_id>", methods=["POST"])
-def tracker_delete(app_id: int):
-    delete_application(app_id)
-    flash("지원 기록이 삭제되었습니다.", "success")
-    return redirect(url_for("tracker"))
-
-
-# ============================================================
-# 공고 카드에서 바로 지원 기록 추가 (AJAX)
-# ============================================================
-@app.route("/tracker/quick-add", methods=["POST"])
-def tracker_quick_add():
-    """검색 결과 카드의 '지원 기록' 버튼에서 호출"""
-    data    = request.get_json(silent=True) or {}
-    company = data.get("company", "").strip()
-    title   = data.get("title", "").strip()
-    if not company or not title:
-        return jsonify({"ok": False, "msg": "회사명/공고명 누락"}), 400
-
-    new_id = add_application(
-        company=company,
-        title=title,
-        link=data.get("link", ""),
-        status="지원완료",
-        deadline=data.get("deadline", ""),
-        location=data.get("location", ""),
-        score=float(data.get("score", 0) or 0),
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=safe_name,
+        mimetype="application/pdf",
     )
-    return jsonify({"ok": True, "id": new_id})
 
 
 # ============================================================
@@ -238,6 +275,5 @@ def tracker_quick_add():
 if __name__ == "__main__":
     import os
     from waitress import serve
-    init_tracker_db()
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)

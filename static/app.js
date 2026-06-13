@@ -1,4 +1,4 @@
-/* app.js — 탭 전환 + Chart.js 대시보드 + 지원기록 퀵애드 */
+/* app.js — 탭 전환 + Chart.js 대시보드 */
 
 /* ============================================================
    탭 전환
@@ -18,11 +18,20 @@ function showTab(name, btn) {
 
 /* 검색 결과 자동 스크롤 */
 window.addEventListener('DOMContentLoaded', function () {
+  applyStatBarWidths();
+
   const results = document.getElementById('results');
   if (results) {
     setTimeout(() => results.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   }
 });
+
+function applyStatBarWidths() {
+  document.querySelectorAll('.stat-fill[data-width]').forEach(el => {
+    const width = Math.max(0, Math.min(100, Number(el.dataset.width) || 0));
+    el.style.width = `${width}%`;
+  });
+}
 
 
 /* ============================================================
@@ -68,29 +77,7 @@ function initCharts() {
     });
   }
 
-  /* 2. 고용형태 도넛 차트 */
-  const jtypeEl = document.getElementById('chart-jtype');
-  if (jtypeEl && data.jtype?.labels?.length) {
-    new Chart(jtypeEl, {
-      type: 'doughnut',
-      data: {
-        labels: data.jtype.labels,
-        datasets: [{
-          data: data.jtype.values,
-          backgroundColor: COLORS,
-          borderWidth: 2,
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { position: 'bottom', labels: { font: { size: 12 } } },
-        },
-      },
-    });
-  }
-
-  /* 3. 적합도 점수 분포 막대 차트 */
+  /* 2. 적합도 점수 분포 막대 차트 */
   const scoreEl = document.getElementById('chart-score');
   if (scoreEl && data.score?.labels?.length) {
     new Chart(scoreEl, {
@@ -112,7 +99,7 @@ function initCharts() {
     });
   }
 
-  /* 4. 출처별 공고 수 (2개 이상일 때만) */
+  /* 3. 출처별 공고 수 (2개 이상일 때만) */
   const srcEl = document.getElementById('chart-source');
   if (srcEl && data.source?.labels?.length > 1) {
     new Chart(srcEl, {
@@ -133,35 +120,4 @@ function initCharts() {
       },
     });
   }
-}
-
-
-/* ============================================================
-   지원 기록 퀵애드 (기능 3 — 공고 카드 버튼)
-   ============================================================ */
-function quickApply(company, title, link, deadline, location, score) {
-  fetch('/tracker/quick-add', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company, title, link, deadline, location, score }),
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.ok) {
-      showToast(`✅ '${company}' 지원 기록 완료!`);
-    } else {
-      showToast(`❌ 기록 실패: ${data.msg}`, true);
-    }
-  })
-  .catch(() => showToast('❌ 네트워크 오류', true));
-}
-
-function showToast(msg, isError = false) {
-  const el = document.getElementById('apply-toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.style.background = isError ? '#dc2626' : '#1e293b';
-  el.style.display = 'block';
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
